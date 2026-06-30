@@ -1,8 +1,14 @@
-# Python example code for the George B. Moody PhysioNet Challenge 2026
+# PhysioNet Challenge 2026 — Team labnofer
+
+## Team
+**labnofer** | Contact: naviidmlk@gmail.com
+
+## Approach
+Random Forest classifier trained on demographic features (age, sex, race, BMI), physiological signal statistics (EEG, EOG, EMG, ECG, respiratory, SpO2), and automated sleep annotations (CAISR: AHI, arousal index, sleep stage percentages, sleep efficiency). Features are imputed with median values for missing channels.
 
 ## What's in this repository?
 
-This repository contains a simple example that illustrates how to format a Python entry for the [George B. Moody PhysioNet Challenge 2026](https://physionetchallenges.org/2026/). If you are participating in the 2026 Challenge, then we recommend using this repository as a template for your entry. You can remove some of the code, reuse other code, and add new code to create your entry. You do not need to use the models, features, and/or libraries in this example for your entry. We encourage a diversity of approaches to the Challenges.
+This repository contains the entry for the [George B. Moody PhysioNet Challenge 2026](https://physionetchallenges.org/2026/) by team **labnofer**. It uses the official Python example as the base structure, implementing a Random Forest baseline model.
 
 For this example, we implemented a random forest model with several simple features. (This simple example is **not** designed to perform well, so you should **not** use it as a baseline for your approach's performance.) You can try it by running the following commands on the Challenge training set. If you are using a relatively recent personal computer, then you should be able to run these commands from start to finish on a small subset (1000 records) of the training data in a few minutes or less.
 

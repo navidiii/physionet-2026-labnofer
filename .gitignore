@@ -1,0 +1,16 @@
+training_data/
+model/
+outputs/
+venv/
+__pycache__/
+*.log
+*.pid
+*.zip
+nohup.out
+dataset-metadata.json
+SUBMISSION_GUIDE.md
+README_NAVID.md
+NOTES.md
+CLAUDE.md
+download_data.sh
+/tmp/

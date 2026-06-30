@@ -1,0 +1,14 @@
+training_data/
+model/
+outputs/
+venv/
+__pycache__/
+*.log
+*.pid
+*.zip
+.git/
+README_NAVID.md
+NOTES.md
+CLAUDE.md
+download_data.sh
+dataset-metadata.json
