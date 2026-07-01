@@ -4,7 +4,7 @@
 **labnofer** | Contact: naviidmlk@gmail.com
 
 ## Approach
-Random Forest classifier trained on demographic features (age, sex, race, BMI), physiological signal statistics (EEG, EOG, EMG, ECG, respiratory, SpO2), and automated sleep annotations (CAISR: AHI, arousal index, sleep stage percentages, sleep efficiency). Features are imputed with median values for missing channels.
+XGBoost gradient boosting classifier trained on 76 features: demographic (age, sex, race, BMI), physiological signal statistics (EEG, EOG, EMG, ECG, respiratory, SpO₂ — 7 time-domain features per channel type), and automated CAISR sleep annotations (AHI, arousal index, limb movement index, sleep stage percentages, sleep efficiency, sleep fragmentation metrics, and AHI severity flags). Class imbalance (1:12 positive-to-negative ratio) is handled via `scale_pos_weight`. Missing channels are imputed with median values. 5-fold stratified cross-validation AUROC: **0.810 ± 0.028**.
 
 ## What's in this repository?
 
