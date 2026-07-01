@@ -15,6 +15,7 @@ import os
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import StratifiedKFold, cross_val_score
+from scipy import signal as scipy_signal
 from xgboost import XGBClassifier
 import sys
 from tqdm import tqdm
@@ -206,7 +207,7 @@ def run_model(model, record, data_folder, verbose):
         # Ensure csv_path is accessible or defined
         physiological_features = extract_physiological_features(phys_data, phys_fs)
     else:
-        physiological_features = np.full(49, float('nan')) # Fallback if signal data does not exist
+        physiological_features = np.full(54, float('nan')) # Fallback if signal data does not exist
 
     # Load the algorithmic annotations.
     algo_file = os.path.join(data_folder, ALGORITHMIC_ANNOTATIONS_SUBFOLDER, site_id, f"{patient_id}_ses-{session_id}_caisr_annotations.edf")
@@ -284,6 +285,34 @@ def extract_demographic_features(data):
     # 5. Concatenate all components into a single vector (1 + 3 + 5 + 1 = 10)
     
     return np.concatenate([age, sex_vec, race_vec, bmi])
+
+
+def compute_eeg_spectral(sig, fs):
+    """
+    Compute EEG frequency band relative powers.
+    Returns 5 features: rel_delta, rel_theta, rel_alpha, rel_beta, theta/alpha ratio.
+    Key Alzheimer's biomarkers: increased theta, decreased alpha.
+    """
+    try:
+        max_samples = int(30 * 60 * fs)
+        sig = sig[:max_samples] if len(sig) > max_samples else sig
+        nperseg = min(int(4 * fs), len(sig))
+        if nperseg < 4:
+            return [float('nan')] * 5
+        freqs, psd = scipy_signal.welch(sig, fs=fs, nperseg=nperseg)
+        def bp(lo, hi):
+            mask = (freqs >= lo) & (freqs < hi)
+            return float(np.trapz(psd[mask], freqs[mask])) if np.any(mask) else float('nan')
+        delta = bp(0.5, 4); theta = bp(4, 8); alpha = bp(8, 13); beta = bp(13, 30)
+        total = bp(0.5, 30)
+        if not total or total <= 0:
+            return [float('nan')] * 5
+        rel_d = delta / total; rel_t = theta / total
+        rel_a = alpha / total; rel_b = beta / total
+        t_a = (theta / alpha) if alpha > 0 else float('nan')
+        return [rel_d, rel_t, rel_a, rel_b, t_a]
+    except Exception:
+        return [float('nan')] * 5
 
 
 def extract_physiological_features(physiological_data, physiological_fs, csv_path=DEFAULT_CSV_PATH):
@@ -375,16 +404,16 @@ def extract_physiological_features(physiological_data, physiological_fs, csv_pat
             # --- Time Domain Features (Very Fast) ---
             std_val = np.std(sig)
             mav_val = np.mean(np.abs(sig))
-            
+
             # Zero Crossing Rate (Proxy for frequency/slowing)
             zcr = np.mean(np.diff(np.sign(sig)) != 0)
-            
+
             # Root Mean Square
             rms = np.sqrt(np.mean(sig**2))
-            
+
             # Signal Activity (Variance)
             activity = np.var(sig)
-            
+
             # Mobility (Hjorth Parameter) - Proxy for mean frequency
             # sqrt(var(diff(sig)) / var(sig))
             diff_sig = np.diff(sig)
@@ -398,9 +427,17 @@ def extract_physiological_features(physiological_data, physiological_fs, csv_pat
 
             final_features.extend([std_val, mav_val, zcr, rms, activity, mobility, complexity])
 
+            # --- EEG Spectral Features (Alzheimer's biomarkers) ---
+            if lead_type == 'eeg' and fs is not None:
+                final_features.extend(compute_eeg_spectral(sig, fs))
+            elif lead_type == 'eeg':
+                final_features.extend([float('nan')] * 5)
+
         else:
-            # Padding: 7 features per lead type
+            # Padding: 7 time-domain + 5 spectral (EEG only)
             final_features.extend([float('nan')] * 7)
+            if lead_type == 'eeg':
+                final_features.extend([float('nan')] * 5)
 
     if 'processed_channels' in locals(): del processed_channels
 
