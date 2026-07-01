@@ -12,9 +12,10 @@
 import joblib
 import numpy as np
 import os
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
+from sklearn.model_selection import StratifiedKFold, cross_val_score
+from xgboost import XGBClassifier
 import sys
 from tqdm import tqdm
 
@@ -127,24 +128,42 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     if verbose:
         print('Training the model on the data...')
 
-    # This very simple model trains a random forest model with very simple features.
+    labels_array = np.asarray(labels, dtype=np.float32)
+    n_pos = int(np.sum(labels_array))
+    n_neg = int(len(labels_array) - n_pos)
+    scale_pos_weight = n_neg / n_pos if n_pos > 0 else 1.0
 
-    # Define the parameters for the random forest classifier and regressor.
-    n_estimators = 12  # Number of trees in the forest.
-    max_leaf_nodes = 34  # Maximum number of leaf nodes in each tree.
-    random_state = 56  # Random state; set for reproducibility.
-    
-    # Created a Pipeline wrapping SimpleImputer and RandomForestClassifier.
-    # This automatically injects median values for any missing data (NaN) during both fit() and predict() calls.
-    rf = RandomForestClassifier(
-        n_estimators=n_estimators, max_leaf_nodes=max_leaf_nodes, random_state=random_state)
-        
+    if verbose:
+        print(f'  Classes: {n_neg} negative, {n_pos} positive (scale_pos_weight={scale_pos_weight:.2f})')
+
     model = Pipeline([
         ('imputer', SimpleImputer(strategy='median')),
-        ('classifier', rf)
+        ('classifier', XGBClassifier(
+            n_estimators=300,
+            max_depth=4,
+            learning_rate=0.05,
+            scale_pos_weight=scale_pos_weight,
+            subsample=0.8,
+            colsample_bytree=0.7,
+            min_child_weight=5,
+            reg_alpha=0.5,
+            reg_lambda=2.0,
+            random_state=42,
+            eval_metric='logloss',
+            verbosity=0,
+            n_jobs=-1,
+        ))
     ])
 
-    # Fit the model.
+    # 5-fold cross-validation to estimate real AUROC before final fit
+    if verbose:
+        print('  Running 5-fold CV to estimate generalization AUROC...')
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    cv_scores = cross_val_score(model, features, labels, cv=cv, scoring='roc_auc', n_jobs=1)
+    if verbose:
+        print(f'  CV AUROC: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}  (per fold: {[f"{s:.3f}" for s in cv_scores]})')
+
+    # Fit the model on all data.
     model.fit(features, labels)
 
     # Create a folder for the model if it does not already exist.
@@ -195,7 +214,7 @@ def run_model(model, record, data_folder, verbose):
         algo_data, _ = load_signal_data(algo_file)
         algorithmic_features = extract_algorithmic_annotations_features(algo_data)
     else:
-        algorithmic_features = np.full(12, float('nan')) # Fallback if algorithmic annotations do not exist
+        algorithmic_features = np.full(17, float('nan')) # Fallback if algorithmic annotations do not exist
 
     features = np.hstack([demographic_features, physiological_features, algorithmic_features]).reshape(1, -1)
 
@@ -390,10 +409,10 @@ def extract_physiological_features(physiological_data, physiological_fs, csv_pat
 def extract_algorithmic_annotations_features(algo_data):
     """
     Extracts sleep architecture and event density features from CAISR outputs.
-    Output vector length: 12
+    Output vector length: 17
     """
     if not algo_data:
-        return np.full(12, float('nan'))
+        return np.full(17, float('nan'))
 
     features = []
 
@@ -455,6 +474,26 @@ def extract_algorithmic_annotations_features(algo_data):
     # Standardize '9.0' or other filler values to NaN
     clean_prob = lambda x: x if x < 1.0 else float('nan')
     features.extend([clean_prob(prob_w), clean_prob(prob_n3), clean_prob(prob_arous)])
+
+    # --- 4. Sleep Fragmentation ---
+    if len(valid_stages) > 1 and total_hours > 0:
+        transitions_hr = float(np.count_nonzero(np.diff(valid_stages))) / total_hours
+        sleep_onset = np.where((valid_stages >= 1) & (valid_stages <= 4))[0]
+        if len(sleep_onset) > 0:
+            post_onset = valid_stages[sleep_onset[0]:]
+            waso_min = float(np.sum(post_onset == 5)) * 30.0 / 60.0
+        else:
+            waso_min = float('nan')
+    else:
+        transitions_hr = float('nan')
+        waso_min = float('nan')
+    features.extend([transitions_hr, waso_min])
+
+    # --- 5. AHI Severity Flags ---
+    ahi_mild   = float(ahi_auto >= 5)  if not np.isnan(ahi_auto) else float('nan')
+    ahi_mod    = float(ahi_auto >= 15) if not np.isnan(ahi_auto) else float('nan')
+    ahi_severe = float(ahi_auto >= 30) if not np.isnan(ahi_auto) else float('nan')
+    features.extend([ahi_mild, ahi_mod, ahi_severe])
 
     return np.array(features)
 
