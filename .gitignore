@@ -6,6 +6,7 @@ __pycache__/
 *.log
 *.pid
 *.zip
+*.npz
 nohup.out
 dataset-metadata.json
 SUBMISSION_GUIDE.md
@@ -14,3 +15,10 @@ NOTES.md
 CLAUDE.md
 download_data.sh
 /tmp/
+.claude/
+=4.0.0
+auto_cycle.py
+cv_honest_eval.py
+optuna_search*.py
+scores_round*.csv
+*.bak

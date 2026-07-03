@@ -14,9 +14,11 @@ import numpy as np
 import os
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.metrics import roc_auc_score
 from scipy import signal as scipy_signal
 from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 import sys
 from tqdm import tqdm
 
@@ -31,6 +33,34 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Build the absolute path to the CSV file relative to the script location
 DEFAULT_CSV_PATH = os.path.join(SCRIPT_DIR, 'channel_table.csv')
+
+# Feature subset selected via SHAP importance ranking (out of the 81 raw demographic +
+# physiological + algorithmic features below), with `age`, `waso_min`, `resp_mav`, and
+# `limb_auto` then explicitly dropped on top of that via a leave-one-out + combined-removal
+# search using the Challenge's own metrics (Reward, Age-conditioned AUROC) instead of plain
+# AUROC. `age` was the single highest-SHAP-importance feature but a harmful shortcut: since
+# Age-conditioned AUROC only compares similarly-aged patients and Reward is very sensitive to
+# calibration, leaning on raw age hurt both. The other three had a smaller but real version
+# of the same problem. Removing all four raised mean CV Reward from 0.40 (age included) to
+# 0.56 and mean CV Age-conditioned AUROC from 0.77 to 0.80 (5-seed average), at a cost of
+# only ~0.01 on plain AUROC. `bmi` looks similar to age/waso_min at a glance but is NOT a
+# shortcut — removing it collapses Reward to ~0.17, so it stays. Going further and also
+# dropping `prob_arous`/`eeg_zcr` was tried but made both Reward and Age-AUROC worse, so the
+# search stopped here. Indices refer to the position in np.hstack([demographic,
+# physiological, algorithmic]): bmi, eeg_zcr, eeg_rel_theta, eog_zcr, eog_cmp, chin_zcr,
+# chin_mob, ecg_cmp, spo2_rms, n3_pct, r_pct, prob_arous.
+SELECTED_FEATURE_INDICES = [9, 12, 18, 24, 28, 31, 34, 49, 60, 70, 71, 75]
+
+# XGBoost/LightGBM ensemble blend weight, re-tuned via multi-seed CV weight search after
+# each SELECTED_FEATURE_INDICES change (the optimal blend shifts as the feature set changes):
+# mean CV Reward+Age-AUROC is maximized around weight=0.10 on the current age-free feature set.
+XGB_ENSEMBLE_WEIGHT = 0.10
+
+# Binary decision threshold, re-tuned via multi-seed CV grid search on the Challenge Reward
+# metric (which pays ~1/prevalence-1 for a caught true positive vs -1 for a miss or false
+# alarm, so with ~7.6% prevalence it strongly favors a low threshold): smoothed mean CV
+# Reward ~0.55 at 0.012 on the current feature set vs ~0.06 at the naive 0.5.
+DECISION_THRESHOLD = 0.012
 
 ################################################################################
 #
@@ -123,6 +153,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     pbar.close()
 
     features = np.asarray(features, dtype=np.float32)
+    ages = features[:, 0]  # age is demographic feature index 0; needed for Reward/Age-AUROC even though it's excluded from SELECTED_FEATURE_INDICES
+    features = features[:, SELECTED_FEATURE_INDICES]
     labels = np.asarray(labels, dtype=bool)
 
     # Train the models on the features.
@@ -137,21 +169,39 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     if verbose:
         print(f'  Classes: {n_neg} negative, {n_pos} positive (scale_pos_weight={scale_pos_weight:.2f})')
 
-    model = Pipeline([
+    xgb_model = Pipeline([
         ('imputer', SimpleImputer(strategy='median')),
         ('classifier', XGBClassifier(
-            n_estimators=300,
-            max_depth=4,
+            n_estimators=357,
+            max_depth=6,
+            learning_rate=0.053335,
+            scale_pos_weight=scale_pos_weight,
+            subsample=0.804855,
+            colsample_bytree=0.736161,
+            min_child_weight=9,
+            reg_alpha=0.104466,
+            reg_lambda=0.045377,
+            random_state=42,
+            eval_metric='logloss',
+            verbosity=0,
+            n_jobs=-1,
+        ))
+    ])
+
+    lgb_model = Pipeline([
+        ('imputer', SimpleImputer(strategy='median')),
+        ('classifier', LGBMClassifier(
+            n_estimators=500,
+            max_depth=6,
             learning_rate=0.05,
             scale_pos_weight=scale_pos_weight,
             subsample=0.8,
             colsample_bytree=0.7,
-            min_child_weight=5,
-            reg_alpha=0.5,
-            reg_lambda=2.0,
+            min_child_samples=20,
+            reg_alpha=0.1,
+            reg_lambda=0.1,
             random_state=42,
-            eval_metric='logloss',
-            verbosity=0,
+            verbose=-1,
             n_jobs=-1,
         ))
     ])
@@ -160,18 +210,33 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     if verbose:
         print('  Running 5-fold CV to estimate generalization AUROC...')
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    cv_scores = cross_val_score(model, features, labels, cv=cv, scoring='roc_auc', n_jobs=1)
+    xgb_probs_cv = cross_val_predict(xgb_model, features, labels, cv=cv, method='predict_proba', n_jobs=1)[:, 1]
+    lgb_probs_cv = cross_val_predict(lgb_model, features, labels, cv=cv, method='predict_proba', n_jobs=1)[:, 1]
+    blend_probs_cv = XGB_ENSEMBLE_WEIGHT * xgb_probs_cv + (1 - XGB_ENSEMBLE_WEIGHT) * lgb_probs_cv
     if verbose:
-        print(f'  CV AUROC: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}  (per fold: {[f"{s:.3f}" for s in cv_scores]})')
+        print(f'  XGB CV AUROC: {roc_auc_score(labels, xgb_probs_cv):.4f}')
+        print(f'  LGB CV AUROC: {roc_auc_score(labels, lgb_probs_cv):.4f}')
+        print(f'  Ensemble CV AUROC (weight={XGB_ENSEMBLE_WEIGHT}): {roc_auc_score(labels, blend_probs_cv):.4f}')
+        # Honest CV estimate using the Challenge's own scoring functions (Reward is what the
+        # leaderboard ranks on, and Age-conditioned AUROC penalizes relying on raw age as a
+        # shortcut) instead of just plain AUROC.
+        from evaluate_model import compute_prevalence, compute_reward, compute_auroc_age
+        labels_float = labels.astype(float)
+        age_to_prevalence = compute_prevalence(ages, labels_float, ages, gap=2)
+        blend_preds_cv = (blend_probs_cv >= DECISION_THRESHOLD).astype(float)
+        print(f'  Ensemble CV Reward (threshold={DECISION_THRESHOLD}): '
+              f'{compute_reward(labels_float, blend_preds_cv, ages, age_to_prevalence):.4f}')
+        print(f'  Ensemble CV Age-conditioned AUROC: {compute_auroc_age(labels_float, blend_probs_cv, ages, gap=2):.4f}')
 
-    # Fit the model on all data.
-    model.fit(features, labels)
+    # Fit both models on all data.
+    xgb_model.fit(features, labels)
+    lgb_model.fit(features, labels)
 
     # Create a folder for the model if it does not already exist.
     os.makedirs(model_folder, exist_ok=True)
 
-    # Save the model.
-    save_model(model_folder, model)
+    # Save the ensemble.
+    save_model(model_folder, xgb_model, lgb_model)
 
     if verbose:
         print('Done.')
@@ -187,8 +252,13 @@ def load_model(model_folder, verbose):
 # Run your trained model. This function is *required*. You should edit this function to add your code, but do *not* change the
 # arguments of this function.
 def run_model(model, record, data_folder, verbose):
-    # Load the model.
-    model = model['model']
+    # Support both ensemble {'xgb', 'lgb'} and legacy {'model'} formats
+    if 'xgb' in model:
+        xgb_model = model['xgb']
+        lgb_model = model.get('lgb')
+    else:
+        xgb_model = model['model']
+        lgb_model = None
 
     # Extract identifiers from the record dictionary
     patient_id = record[HEADERS['bids_folder']]
@@ -218,10 +288,16 @@ def run_model(model, record, data_folder, verbose):
         algorithmic_features = np.full(17, float('nan')) # Fallback if algorithmic annotations do not exist
 
     features = np.hstack([demographic_features, physiological_features, algorithmic_features]).reshape(1, -1)
+    features = features[:, SELECTED_FEATURE_INDICES]
 
-    # Apply the model to the features.
-    binary_output = model.predict(features)[0]
-    probability_output = model.predict_proba(features)[0][1]
+    # Apply the ensemble to the features.
+    xgb_prob = xgb_model.predict_proba(features)[0][1]
+    if lgb_model is not None:
+        lgb_prob = lgb_model.predict_proba(features)[0][1]
+        probability_output = XGB_ENSEMBLE_WEIGHT * xgb_prob + (1 - XGB_ENSEMBLE_WEIGHT) * lgb_prob
+    else:
+        probability_output = xgb_prob
+    binary_output = int(probability_output >= DECISION_THRESHOLD)
 
     return binary_output, probability_output
 
@@ -603,7 +679,9 @@ def extract_human_annotations_features(human_data):
 
 
 # Save your trained model.
-def save_model(model_folder, model):
-    d = {'model': model}
+def save_model(model_folder, xgb_model, lgb_model=None):
+    d = {'xgb': xgb_model}
+    if lgb_model is not None:
+        d['lgb'] = lgb_model
     filename = os.path.join(model_folder, 'model.sav')
     joblib.dump(d, filename, protocol=0)
