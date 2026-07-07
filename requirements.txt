@@ -6,3 +6,8 @@ scikit-learn==1.6.0
 scipy==1.13.1
 tqdm==4.67.1
 xgboost>=2.0.0
+mne==1.12.1
+yasa==0.7.0
+tensorpac==0.6.5
+numba==0.66.0
+llvmlite==0.48.0

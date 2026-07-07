@@ -21,6 +21,7 @@ import sys
 from tqdm import tqdm
 
 from helper_code import *
+from deploy_features import extract_deploy, DEPLOY_KEYS
 
 ################################################################################
 # Path & Constant Configuration (Added for Robustness)
@@ -121,7 +122,10 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             # Store the features and labels, but the human annotations are not available on the hidden validation and test sets.
             if label == 0 or label == 1:
                 full_vec = np.hstack([demographic_features, physiological_features, algorithmic_features])
-                features.append(full_vec[CLEAN_FEATURE_INDICES])
+                # Append the 4 site-invariant YASA-derived features (verified clean by the
+                # same site-shortcut-ratio screen) to the 46 clean base features.
+                yasa_features = extract_deploy(physiological_data_file, algorithmic_annotations_file)
+                features.append(np.hstack([full_vec[CLEAN_FEATURE_INDICES], yasa_features]))
                 labels.append(label)
 
             if 'physiological_data' in locals():
@@ -232,7 +236,13 @@ def run_model(model, record, data_folder, verbose):
         algorithmic_features = np.full(17, float('nan')) # Fallback if algorithmic annotations do not exist
 
     full_vec = np.hstack([demographic_features, physiological_features, algorithmic_features])
-    features = full_vec[CLEAN_FEATURE_INDICES].reshape(1, -1)
+    # Extract the same 4 site-invariant YASA features; NaN-fill if the record is missing
+    # (SimpleImputer in the pipeline handles NaN, matching train-time behavior).
+    if os.path.exists(phys_file) and os.path.exists(algo_file):
+        yasa_features = extract_deploy(phys_file, algo_file)
+    else:
+        yasa_features = np.full(len(DEPLOY_KEYS), float('nan'), dtype=np.float32)
+    features = np.hstack([full_vec[CLEAN_FEATURE_INDICES], yasa_features]).reshape(1, -1)
 
     # Apply the model to the features.
     binary_output = model.predict(features)[0]
