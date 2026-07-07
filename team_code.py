@@ -401,6 +401,18 @@ def extract_physiological_features(physiological_data, physiological_fs, csv_pat
                 break 
 
         if sig is not None and len(sig) > 1:
+            # SpO2 is stored under wildly different EDF unit scales across
+            # recording systems (observed: fraction [0,1], direct percent, and a
+            # ~1e-6 micro-scale on one site) since it isn't a bioelectric voltage
+            # like the other leads. Auto-detect the power-of-10 correction from
+            # the signal's own median so std/rms/etc. are comparable across
+            # sites instead of encoding which site/device recorded the record.
+            if lead_type == 'spo2':
+                med = np.median(np.abs(sig))
+                if med > 0 and np.isfinite(med):
+                    power = int(round(np.log10(90.0 / med)))
+                    sig = sig * (10.0 ** power)
+
             # --- Time Domain Features (Very Fast) ---
             std_val = np.std(sig)
             mav_val = np.mean(np.abs(sig))
