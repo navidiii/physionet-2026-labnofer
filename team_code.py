@@ -32,6 +32,19 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Build the absolute path to the CSV file relative to the script location
 DEFAULT_CSV_PATH = os.path.join(SCRIPT_DIR, 'channel_table.csv')
 
+# Indices (of the 81 demographic+physiological+algorithmic features) kept after
+# screening every feature for site-identity leakage: ratio = |corr(feature, per-site
+# training prevalence)| / |corr(feature, label)|. Features with ratio>3 are more
+# predictive of which of our 3 training sites a record came from than of the label
+# itself (e.g. amplifier/filter fingerprints), so a model trained on them risks
+# learning "this site had higher prevalence" instead of real physiology -- a
+# shortcut that breaks on the truly unseen validation/test site. This replaces
+# SHAP-based selection (which optimizes in-sample predictiveness and previously
+# picked several of these exact shortcut features, e.g. commit 713b80f).
+CLEAN_FEATURE_INDICES = [0, 1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 20,
+                          21, 23, 24, 28, 29, 30, 32, 36, 37, 38, 39, 40, 47, 54, 56, 61,
+                          65, 66, 67, 70, 71, 72, 73, 74, 75, 76, 77, 78]
+
 ################################################################################
 #
 # Required functions. Edit these functions to add your code, but do not change the arguments for the functions.
@@ -107,7 +120,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
             # Store the features and labels, but the human annotations are not available on the hidden validation and test sets.
             if label == 0 or label == 1:
-                features.append(np.hstack([demographic_features, physiological_features, algorithmic_features]))
+                full_vec = np.hstack([demographic_features, physiological_features, algorithmic_features])
+                features.append(full_vec[CLEAN_FEATURE_INDICES])
                 labels.append(label)
 
             if 'physiological_data' in locals():
@@ -217,7 +231,8 @@ def run_model(model, record, data_folder, verbose):
     else:
         algorithmic_features = np.full(17, float('nan')) # Fallback if algorithmic annotations do not exist
 
-    features = np.hstack([demographic_features, physiological_features, algorithmic_features]).reshape(1, -1)
+    full_vec = np.hstack([demographic_features, physiological_features, algorithmic_features])
+    features = full_vec[CLEAN_FEATURE_INDICES].reshape(1, -1)
 
     # Apply the model to the features.
     binary_output = model.predict(features)[0]
