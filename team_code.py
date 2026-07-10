@@ -21,6 +21,7 @@ import sys
 from tqdm import tqdm
 
 from helper_code import *
+from caisr_features import extract_caisr, CAISR_KEYS
 
 ################################################################################
 # Path & Constant Configuration (Added for Robustness)
@@ -31,6 +32,28 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Build the absolute path to the CSV file relative to the script location
 DEFAULT_CSV_PATH = os.path.join(SCRIPT_DIR, 'channel_table.csv')
+
+# Rich CAISR-annotation-derived features to append to the 81 baseline features. The CAISR
+# annotations are produced by the same algorithm on every site, so these are montage- and
+# amplifier-invariant (unlike raw-EEG spectral features, which encode a site fingerprint and
+# evaporate on the unseen validation/test site). This subset was chosen from the 29 features
+# in caisr_features.CAISR_KEYS by the site-shortcut-ratio screen (ratio<=3, i.e. not a
+# site proxy) AND a label-correlation floor (|corr|>=0.06 on all 1103 training records).
+# The strongest are REM-specific arousal/respiratory burden -- literature-backed markers of
+# future cognitive decline.
+CAISR_SELECTED = ['arou_idx_rem', 'frac_r', 'frac_w', 'sleep_eff', 'tst_hr', 'waso_min',
+                  'resp_idx_rem', 'bout_w', 'limb_idx', 'rem_frac_last', 'n_rem_bouts',
+                  'frac_n3', 'bout_n3', 'trans_entropy']
+CAISR_SEL_IDX = [CAISR_KEYS.index(k) for k in CAISR_SELECTED]
+
+
+def _caisr_vec(caisr_path):
+    """Extract the selected site-invariant CAISR features (NaN-filled if unavailable)."""
+    if caisr_path is not None and os.path.exists(caisr_path):
+        full = extract_caisr(caisr_path)
+    else:
+        full = np.full(len(CAISR_KEYS), np.nan, dtype=np.float32)
+    return full[CAISR_SEL_IDX]
 
 ################################################################################
 #
@@ -107,7 +130,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
 
             # Store the features and labels, but the human annotations are not available on the hidden validation and test sets.
             if label == 0 or label == 1:
-                features.append(np.hstack([demographic_features, physiological_features, algorithmic_features]))
+                caisr_features = _caisr_vec(algorithmic_annotations_file)
+                features.append(np.hstack([demographic_features, physiological_features, algorithmic_features, caisr_features]))
                 labels.append(label)
 
             if 'physiological_data' in locals():
@@ -217,7 +241,8 @@ def run_model(model, record, data_folder, verbose):
     else:
         algorithmic_features = np.full(17, float('nan')) # Fallback if algorithmic annotations do not exist
 
-    features = np.hstack([demographic_features, physiological_features, algorithmic_features]).reshape(1, -1)
+    caisr_features = _caisr_vec(algo_file)
+    features = np.hstack([demographic_features, physiological_features, algorithmic_features, caisr_features]).reshape(1, -1)
 
     # Apply the model to the features.
     binary_output = model.predict(features)[0]
