@@ -32,6 +32,28 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Build the absolute path to the CSV file relative to the script location
 DEFAULT_CSV_PATH = os.path.join(SCRIPT_DIR, 'channel_table.csv')
 
+# --- Age-conditioned Bayes decision rule (targets the Reward metric) ---
+# The Reward metric is age-conditioned and brutally asymmetric: a true positive is worth
+# 1/p(age) - 1 (huge for young patients where prevalence p is tiny) while a false positive
+# costs only -1. The reward-optimal (Bayes) rule is to predict positive whenever the
+# posterior exceeds prevalence, i.e. prob > p(age). We use prob > C*p(age): C absorbs the
+# scale_pos_weight probability inflation, and the age-conditioning makes the rule naturally
+# aggressive on young patients (the reward jackpot) and conservative on older ones. This
+# changes only the binary decision; the probability output (and thus the threshold-free
+# age-conditioned AUROC) is identical to the plain baseline.
+BAYES_C = 2.0
+
+def _prevalence_at(age, train_ages, train_labels, gap=2):
+    """Prevalence among training patients within +/-gap years of `age`, matching the
+    challenge's compute_prevalence (0.5 floor on the numerator). None if age unknown."""
+    if age is None or not np.isfinite(age):
+        return None
+    mask = np.abs(train_ages - age) <= gap
+    n = int(np.sum(mask))
+    if n == 0:
+        return None
+    return max(float(np.sum(train_labels[mask])), 0.5) / n
+
 ################################################################################
 #
 # Required functions. Edit these functions to add your code, but do not change the arguments for the functions.
@@ -61,7 +83,8 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     # Iterate over the records to extract the features and labels.
     features = list()
     labels = list()
-    
+    ages = list()  # per-record age, for the age-conditioned prevalence table
+
     pbar = tqdm(range(num_records), desc="Extracting Features", unit="record", disable=not verbose)
     for i in pbar:
         try:
@@ -109,6 +132,7 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
             if label == 0 or label == 1:
                 features.append(np.hstack([demographic_features, physiological_features, algorithmic_features]))
                 labels.append(label)
+                ages.append(load_age(patient_data))
 
             if 'physiological_data' in locals():
                 del physiological_data
@@ -170,8 +194,17 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     # Create a folder for the model if it does not already exist.
     os.makedirs(model_folder, exist_ok=True)
 
+    # Store the training ages/labels so run_model can compute the age-conditioned
+    # prevalence p(age) for the Bayes decision rule (probability output is unchanged).
+    train_ages = np.asarray(ages, dtype=float)
+    train_labels = np.asarray(labels_array, dtype=float)
+    if verbose:
+        finite = np.isfinite(train_ages)
+        print(f'  Bayes rule: C={BAYES_C}, prevalence table from {int(finite.sum())} aged records '
+              f'(overall prevalence={train_labels[finite].mean():.4f})')
+
     # Save the model.
-    save_model(model_folder, model)
+    save_model(model_folder, model, train_ages, train_labels)
 
     if verbose:
         print('Done.')
@@ -187,7 +220,9 @@ def load_model(model_folder, verbose):
 # Run your trained model. This function is *required*. You should edit this function to add your code, but do *not* change the
 # arguments of this function.
 def run_model(model, record, data_folder, verbose):
-    # Load the model.
+    # Load the model and the age-conditioned prevalence table.
+    train_ages = model.get('train_ages')
+    train_labels = model.get('train_labels')
     model = model['model']
 
     # Extract identifiers from the record dictionary
@@ -219,9 +254,18 @@ def run_model(model, record, data_folder, verbose):
 
     features = np.hstack([demographic_features, physiological_features, algorithmic_features]).reshape(1, -1)
 
-    # Apply the model to the features.
-    binary_output = model.predict(features)[0]
+    # Probability output is the plain baseline probability (so the threshold-free
+    # age-conditioned AUROC is identical to baseline). The binary decision uses the
+    # age-conditioned Bayes rule: predict positive iff prob > C * prevalence(age).
     probability_output = model.predict_proba(features)[0][1]
+    if train_ages is not None and train_labels is not None:
+        p_age = _prevalence_at(load_age(patient_data), train_ages, train_labels)
+        if p_age is not None:
+            binary_output = int(probability_output > BAYES_C * p_age)
+        else:
+            binary_output = int(model.predict(features)[0])  # age unknown -> fall back to 0.5
+    else:
+        binary_output = int(model.predict(features)[0])
 
     return binary_output, probability_output
 
@@ -603,7 +647,7 @@ def extract_human_annotations_features(human_data):
 
 
 # Save your trained model.
-def save_model(model_folder, model):
-    d = {'model': model}
+def save_model(model_folder, model, train_ages=None, train_labels=None):
+    d = {'model': model, 'train_ages': train_ages, 'train_labels': train_labels}
     filename = os.path.join(model_folder, 'model.sav')
     joblib.dump(d, filename, protocol=0)
