@@ -194,8 +194,21 @@ def train_model(data_folder, model_folder, verbose, csv_path=DEFAULT_CSV_PATH):
     # Create a folder for the model if it does not already exist.
     os.makedirs(model_folder, exist_ok=True)
 
+    # Aggressive global base-rate decision threshold (the sub7 config that gave the best
+    # Reward, 0.067). Predict positive at ~AGGR x the training prevalence, using a quantile
+    # of the training probabilities (rank-based -> more transferable than an absolute prob).
+    # This drives the asymmetric Reward metric; it does not affect the probability output
+    # (so the age-conditioned AUROC ranking is that of the CAISR-enhanced model).
+    AGGR = 1.3
+    train_probs = model.predict_proba(features)[:, 1]
+    prevalence = float(np.mean(labels_array)) if len(labels_array) else 0.076
+    target_pos_rate = float(min(0.5, AGGR * prevalence))
+    threshold = float(np.quantile(train_probs, 1.0 - target_pos_rate))
+    if verbose:
+        print(f'  Aggressive base-rate threshold = {threshold:.4f} (target pos-rate={target_pos_rate:.4f})')
+
     # Save the model.
-    save_model(model_folder, model)
+    save_model(model_folder, model, threshold)
 
     if verbose:
         print('Done.')
@@ -211,7 +224,8 @@ def load_model(model_folder, verbose):
 # Run your trained model. This function is *required*. You should edit this function to add your code, but do *not* change the
 # arguments of this function.
 def run_model(model, record, data_folder, verbose):
-    # Load the model.
+    # Load the model and its decision threshold.
+    threshold = model.get('threshold', 0.5)
     model = model['model']
 
     # Extract identifiers from the record dictionary
@@ -245,8 +259,8 @@ def run_model(model, record, data_folder, verbose):
     features = np.hstack([demographic_features, physiological_features, algorithmic_features, caisr_features]).reshape(1, -1)
 
     # Apply the model to the features.
-    binary_output = model.predict(features)[0]
     probability_output = model.predict_proba(features)[0][1]
+    binary_output = int(probability_output >= threshold)
 
     return binary_output, probability_output
 
@@ -628,7 +642,7 @@ def extract_human_annotations_features(human_data):
 
 
 # Save your trained model.
-def save_model(model_folder, model):
-    d = {'model': model}
+def save_model(model_folder, model, threshold=0.5):
+    d = {'model': model, 'threshold': threshold}
     filename = os.path.join(model_folder, 'model.sav')
     joblib.dump(d, filename, protocol=0)
