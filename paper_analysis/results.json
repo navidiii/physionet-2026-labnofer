@@ -1,0 +1,132 @@
+{
+  "cohort": {
+    "n_records": 1103,
+    "n_positive": 84,
+    "prevalence": 0.0762,
+    "per_site": {
+      "I0002": {
+        "n": 54,
+        "pos": 8,
+        "prev": 0.1481
+      },
+      "I0006": {
+        "n": 192,
+        "pos": 20,
+        "prev": 0.1042
+      },
+      "S0001": {
+        "n": 857,
+        "pos": 56,
+        "prev": 0.0653
+      }
+    },
+    "age_range": [
+      50.0,
+      88.0
+    ]
+  },
+  "claim1_demographics_floor": {
+    "demographics_only_loso_auroc": 0.5338,
+    "full_model_loso_auroc": 0.5322,
+    "full_model_std_over_3_seeds": 0.0135,
+    "gain_over_demographics": -0.0017
+  },
+  "claim2_foundation_model": {
+    "n_records_with_embeddings": 392,
+    "n_positive": 84,
+    "embedding_dim": 1536,
+    "demographics_only_same_subset": 0.5785,
+    "best_embedding_config": "mean+std|PCA64|C0.05",
+    "best_embedding_auroc": 0.5623,
+    "n_configs_tested": 27,
+    "n_configs_beating_demographics": 0,
+    "full_grid": {
+      "mean|PCA16|C0.05": 0.5063,
+      "mean|PCA16|C0.2": 0.5088,
+      "mean|PCA16|C1.0": 0.5085,
+      "mean|PCA32|C0.05": 0.5289,
+      "mean|PCA32|C0.2": 0.5286,
+      "mean|PCA32|C1.0": 0.527,
+      "mean|PCA64|C0.05": 0.5245,
+      "mean|PCA64|C0.2": 0.5009,
+      "mean|PCA64|C1.0": 0.4777,
+      "std|PCA16|C0.05": 0.4783,
+      "std|PCA16|C0.2": 0.4783,
+      "std|PCA16|C1.0": 0.4774,
+      "std|PCA32|C0.05": 0.4245,
+      "std|PCA32|C0.2": 0.4252,
+      "std|PCA32|C1.0": 0.4248,
+      "std|PCA64|C0.05": 0.4459,
+      "std|PCA64|C0.2": 0.4497,
+      "std|PCA64|C1.0": 0.4509,
+      "mean+std|PCA16|C0.05": 0.4651,
+      "mean+std|PCA16|C0.2": 0.4645,
+      "mean+std|PCA16|C1.0": 0.4648,
+      "mean+std|PCA32|C0.05": 0.5025,
+      "mean+std|PCA32|C0.2": 0.5097,
+      "mean+std|PCA32|C1.0": 0.511,
+      "mean+std|PCA64|C0.05": 0.5623,
+      "mean+std|PCA64|C0.2": 0.5563,
+      "mean+std|PCA64|C1.0": 0.4871
+    }
+  },
+  "claim3_site_confounding": {
+    "n_features_total": 76,
+    "n_features_usable": 74,
+    "n_site_confounded_ratio_gt3": 35,
+    "n_clean": 39,
+    "pct_confounded": 47.3,
+    "max_ratio": 865.54,
+    "per_site_prevalence": {
+      "I0002": 0.1481,
+      "I0006": 0.1042,
+      "S0001": 0.0653
+    }
+  },
+  "claim4_cv_vs_leaderboard": {
+    "leaderboard": [
+      {
+        "id": 2083,
+        "commit": "443af5c",
+        "desc": "baseline XGBoost (76 feat)",
+        "auroc": 0.63,
+        "reward": 0.007
+      },
+      {
+        "id": 2102,
+        "commit": "713b80f",
+        "desc": "ensemble + 12-feat selection",
+        "auroc": 0.579,
+        "reward": -0.08
+      },
+      {
+        "id": 2177,
+        "commit": "fb37529",
+        "desc": "de-aged model + threshold",
+        "auroc": 0.602,
+        "reward": 0.067
+      },
+      {
+        "id": 2184,
+        "commit": "bf584d0",
+        "desc": "baseline + age-conditioned Bayes",
+        "auroc": 0.609,
+        "reward": 0.036
+      },
+      {
+        "id": 2204,
+        "commit": "5514a6a",
+        "desc": "baseline + 14 CAISR features",
+        "auroc": 0.576,
+        "reward": -0.005
+      },
+      {
+        "id": 2225,
+        "commit": "7025584",
+        "desc": "baseline + very aggressive thresh",
+        "auroc": 0.63,
+        "reward": -0.186
+      }
+    ]
+  }
+}

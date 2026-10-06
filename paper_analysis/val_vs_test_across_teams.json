@@ -1,0 +1,14 @@
+{
+  "n_teams": 93,
+  "spearman_val_test": 0.543,
+  "spearman_p": 1.8521799708811498e-08,
+  "pearson_val_test": 0.575,
+  "delta_mean": -0.0169,
+  "delta_sd": 0.0699,
+  "delta_median": -0.01,
+  "n_abs_delta_ge_0_047": 44,
+  "our_delta": -0.047,
+  "our_rank_val": 49,
+  "our_rank_test": 68,
+  "frac_teams_with_larger_drop_than_ours": 0.28
+}

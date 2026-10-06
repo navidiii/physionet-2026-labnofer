@@ -1,0 +1,42 @@
+{
+  "n_features_probed": 66,
+  "n_clean_features": 55,
+  "chance_balanced_accuracy": 0.333,
+  "n_features_mostly_missing_in_some_site": 7,
+  "n_features_constant_in_some_site": 8,
+  "n_features_le5_unique_in_some_site": 11,
+  "site_all_raw": {
+    "auc": 0.999,
+    "balanced_acc": 0.99
+  },
+  "site_raw_without_top5_site_features": {
+    "auc": 1.0,
+    "balanced_acc": 0.986
+  },
+  "site_raw_without_top10_site_features": {
+    "auc": 1.0,
+    "balanced_acc": 0.989
+  },
+  "site_raw_without_top20_site_features": {
+    "auc": 1.0,
+    "balanced_acc": 0.987
+  },
+  "site_raw_only_20_least_site_associated": {
+    "auc": 0.986,
+    "balanced_acc": 0.925,
+    "max_eta2_site": 0.0226
+  },
+  "site_all_per_site_rank_normalised": {
+    "auc": 0.998,
+    "balanced_acc": 0.985
+  },
+  "site_clean_raw": {
+    "auc": 1.0,
+    "balanced_acc": 0.986
+  },
+  "site_clean_per_site_rank_normalised": {
+    "auc": 0.723,
+    "balanced_acc": 0.402
+  },
+  "outcome_from_same_features_pooled_5fold_auroc": 0.638
+}
